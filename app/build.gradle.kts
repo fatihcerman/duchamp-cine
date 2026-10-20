@@ -37,10 +37,6 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
-        freeCompilerArgs += listOf(
-            "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
-            "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi"
-        )
     }
 
     buildFeatures {
@@ -75,5 +71,5 @@ dependencies {
     implementation("androidx.exifinterface:exifinterface:1.3.7")
 
     // Coroutines
-    implementation("kotlinx.coroutines:kotlinx-coroutines-android:1.8.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 }
