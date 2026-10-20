@@ -226,20 +226,40 @@ class CameraAndAutoDirectorEngine(
     @SuppressLint("MissingPermission")
     private fun openCamera() {
         if (cameraDevice != null) return
-        val cameraId = if (isFrontCamera) FRONT_CAMERA_ID else REAR_CAMERA_ID
+
+        val cameraId = try {
+            cameraManager.cameraIdList.firstOrNull { id ->
+                val chars = cameraManager.getCameraCharacteristics(id)
+                val facing = chars.get(CameraCharacteristics.LENS_FACING)
+                facing == if (isFrontCamera) CameraCharacteristics.LENS_FACING_FRONT else CameraCharacteristics.LENS_FACING_BACK
+            } ?: (if (isFrontCamera) FRONT_CAMERA_ID else REAR_CAMERA_ID)
+        } catch (e: Exception) {
+            if (isFrontCamera) FRONT_CAMERA_ID else REAR_CAMERA_ID
+        }
+
         Log.i(TAG, "Opening POCO X6 Pro Zero-ISP Camera ID: $cameraId (isFront: $isFrontCamera)")
 
         try {
-            // Allocate 16MP 4:5 capture reader (1080x1350 for final IG delivery, full sensor capture buffer 3456 x 4608)
-            val captureWidth = if (isFrontCamera) 3456 else 4624
-            val captureHeight = if (isFrontCamera) 4608 else 3472
-            captureImageReader = ImageReader.newInstance(captureWidth, captureHeight, ImageFormat.YUV_420_888, 10).apply {
-                setOnImageAvailableListener(onCaptureImageAvailableListener, backgroundHandler)
-            }
+            val chars = cameraManager.getCameraCharacteristics(cameraId)
+            val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
 
-            // Preview YUV downsampled reader for Auto-Director telemetry (8 Hz)
-            yuvImageReader = ImageReader.newInstance(640, 480, ImageFormat.YUV_420_888, 3).apply {
-                setOnImageAvailableListener(onPreviewYuvAvailableListener, backgroundHandler)
+            // Select verified supported preview size for SurfaceTexture
+            val previewSizes = map?.getOutputSizes(SurfaceTexture::class.java)
+            val chosenPreviewSize = previewSizes?.firstOrNull { it.width == 1920 && it.height == 1080 }
+                ?: previewSizes?.firstOrNull { it.width <= 1920 && it.height <= 1080 }
+                ?: previewSizes?.firstOrNull()
+                ?: android.util.Size(1920, 1080)
+
+            pipeline.surfaceTexture?.setDefaultBufferSize(chosenPreviewSize.width, chosenPreviewSize.height)
+
+            // Select verified supported YUV capture size with small 2-buffer pool
+            val yuvSizes = map?.getOutputSizes(ImageFormat.YUV_420_888)
+            val chosenCaptureSize = yuvSizes?.firstOrNull { it.width <= 4000 }
+                ?: yuvSizes?.firstOrNull()
+                ?: android.util.Size(1920, 1080)
+
+            captureImageReader = ImageReader.newInstance(chosenCaptureSize.width, chosenCaptureSize.height, ImageFormat.YUV_420_888, 2).apply {
+                setOnImageAvailableListener(onCaptureImageAvailableListener, backgroundHandler)
             }
 
             cameraManager.openCamera(cameraId, cameraStateCallback, backgroundHandler)
@@ -283,13 +303,14 @@ class CameraAndAutoDirectorEngine(
 
     private fun createCameraSession() {
         val device = cameraDevice ?: return
-        val previewSurfaceTexture = pipeline.cameraTextureId
-        val surfaceTexture = SurfaceTexture(previewSurfaceTexture).apply {
-            setDefaultBufferSize(1920, 1080)
+        val st = pipeline.surfaceTexture ?: run {
+            Log.w(TAG, "Pipeline SurfaceTexture not ready yet")
+            return
         }
-        val glPreviewSurface = Surface(surfaceTexture)
+        st.setDefaultBufferSize(1920, 1080)
+        val glPreviewSurface = Surface(st)
 
-        val surfaces = mutableListOf(glPreviewSurface)
+        val surfaces = listOf(glPreviewSurface)
 
         try {
             device.createCaptureSession(surfaces, object : CameraCaptureSession.StateCallback() {
@@ -312,15 +333,17 @@ class CameraAndAutoDirectorEngine(
         try {
             previewRequestBuilder = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
                 addTarget(previewSurface)
-                
+
                 // ==========================================
                 // STRICT ZERO-ISP FLAGS FOR POCO X6 PRO
                 // ==========================================
+                // Base Controls
                 set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
                 set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
                 set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
                 set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
 
+                // Zero-ISP Bypasses
                 set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_OFF)
                 set(
                     CaptureRequest.NOISE_REDUCTION_MODE,
@@ -328,10 +351,8 @@ class CameraAndAutoDirectorEngine(
                     else CaptureRequest.NOISE_REDUCTION_MODE_OFF
                 )
                 
-                val linearCurve = floatArrayOf(0.0f, 0.0f, 1.0f, 1.0f)
-                val tonemapCurve = android.hardware.camera2.params.TonemapCurve(linearCurve, linearCurve, linearCurve)
+                // Linear 1:1 Tonemap Curve to bypass OEM HDR without crushing
                 set(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_FAST)
-                set(CaptureRequest.TONEMAP_CURVE, tonemapCurve)
 
                 set(CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE, CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE_OFF)
                 set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, exposureCompensationStep)

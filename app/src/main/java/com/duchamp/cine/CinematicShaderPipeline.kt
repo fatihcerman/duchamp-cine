@@ -196,7 +196,9 @@ class CinematicShaderPipeline {
     var isAspect191 = false
     var showFilmBorder = false
 
-    // OpenGL State
+    // OpenGL State (VAO / VBO setup for Mali-G615 compatibility)
+    private val vaoId = IntArray(1)
+    private val vboId = IntArray(1)
     private var quadVertexBuffer: FloatBuffer = ByteBuffer.allocateDirect(QUAD_VERTICES.size * 4)
         .order(ByteOrder.nativeOrder())
         .asFloatBuffer()
@@ -226,6 +228,20 @@ class CinematicShaderPipeline {
     private var viewportHeight = 1350
 
     // GLSL 320 es Vertex Shader (Unified Quad)
+        // Pass 1 Vertex Shader (Transforms UV via SurfaceTexture Matrix)
+    private val pass1VertexShaderSource = """#version 320 es
+        layout(location = 0) in vec3 aPosition;
+        layout(location = 1) in vec2 aTexCoord;
+
+        uniform mat4 uSTMatrix;
+        out vec2 vTexCoord;
+
+        void main() {
+            gl_Position = vec4(aPosition, 1.0);
+            vTexCoord = (uSTMatrix * vec4(aTexCoord, 0.0, 1.0)).xy;
+        }
+    """.trimIndent()
+
     private val vertexShaderSource = """#version 320 es
         layout(location = 0) in vec3 aPosition;
         layout(location = 1) in vec2 aTexCoord;
@@ -274,9 +290,7 @@ class CinematicShaderPipeline {
                 uv = warped + vec2(0.5);
             }
 
-            // Transform by Camera2 SurfaceTexture Matrix
-            vec4 transformedCoord = uSTMatrix * vec4(uv, 0.0, 1.0);
-            vec4 rawColor = texture(uCameraTexture, transformedCoord.xy);
+            vec4 rawColor = texture(uCameraTexture, uv);
 
             // Subtract sensor black level (0.015)
             vec3 blackSubtracted = max(rawColor.rgb - vec3(0.015), vec3(0.0));
@@ -607,7 +621,8 @@ class CinematicShaderPipeline {
         }
 
         // Compile Shader Programs
-        pass1Program = buildProgram(vertexShaderSource, pass1FragmentShaderSource)
+        pass1Program = buildProgram(pass1VertexShaderSource, pass1FragmentShaderSource)
+        setupVAO()
         pass2Program = buildProgram(vertexShaderSource, pass2FragmentShaderSource)
         pass3Program = buildProgram(vertexShaderSource, pass3FragmentShaderSource)
         pass4Program = buildProgram(vertexShaderSource, pass4FragmentShaderSource)
@@ -637,9 +652,9 @@ class CinematicShaderPipeline {
             GLES32.glBindTexture(GLES32.GL_TEXTURE_2D, fboTextureIds[i])
             // Dimensity 8300 Mali-G615 supports RGBA16F / RGBA8
             GLES32.glTexImage2D(
-                GLES32.GL_TEXTURE_2D, 0, GLES32.GL_RGBA16F,
+                GLES32.GL_TEXTURE_2D, 0, GLES32.GL_RGBA8,
                 width, height, 0,
-                GLES32.GL_RGBA, GLES32.GL_HALF_FLOAT, null
+                GLES32.GL_RGBA, GLES32.GL_UNSIGNED_BYTE, null
             )
             GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_MIN_FILTER, GLES32.GL_LINEAR)
             GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_MAG_FILTER, GLES32.GL_LINEAR)
@@ -854,22 +869,41 @@ class CinematicShaderPipeline {
         return outputBitmap
     }
 
-    private fun drawQuad(program: Int) {
+    private fun setupVAO() {
+        GLES32.glGenVertexArrays(1, vaoId, 0)
+        GLES32.glBindVertexArray(vaoId[0])
+
+        GLES32.glGenBuffers(1, vboId, 0)
+        GLES32.glBindBuffer(GLES32.GL_ARRAY_BUFFER, vboId[0])
         quadVertexBuffer.position(0)
-        val posLoc = GLES32.glGetAttribLocation(program, "aPosition")
-        val texLoc = GLES32.glGetAttribLocation(program, "aTexCoord")
+        GLES32.glBufferData(GLES32.GL_ARRAY_BUFFER, QUAD_VERTICES.size * 4, quadVertexBuffer, GLES32.GL_STATIC_DRAW)
 
-        GLES32.glEnableVertexAttribArray(posLoc)
-        GLES32.glVertexAttribPointer(posLoc, 3, GLES32.GL_FLOAT, false, 5 * 4, quadVertexBuffer)
+        GLES32.glEnableVertexAttribArray(0)
+        GLES32.glVertexAttribPointer(0, 3, GLES32.GL_FLOAT, false, 5 * 4, 0)
 
-        quadVertexBuffer.position(3)
-        GLES32.glEnableVertexAttribArray(texLoc)
-        GLES32.glVertexAttribPointer(texLoc, 2, GLES32.GL_FLOAT, false, 5 * 4, quadVertexBuffer)
+        GLES32.glEnableVertexAttribArray(1)
+        GLES32.glVertexAttribPointer(1, 2, GLES32.GL_FLOAT, false, 5 * 4, 3 * 4)
 
-        GLES32.glDrawArrays(GLES32.GL_TRIANGLE_STRIP, 0, 4)
+        GLES32.glBindVertexArray(0)
+        GLES32.glBindBuffer(GLES32.GL_ARRAY_BUFFER, 0)
+    }
 
-        GLES32.glDisableVertexAttribArray(posLoc)
-        GLES32.glDisableVertexAttribArray(texLoc)
+    private fun drawQuad(program: Int) {
+        if (vaoId[0] != 0) {
+            GLES32.glBindVertexArray(vaoId[0])
+            GLES32.glDrawArrays(GLES32.GL_TRIANGLE_STRIP, 0, 4)
+            GLES32.glBindVertexArray(0)
+        } else {
+            quadVertexBuffer.position(0)
+            GLES32.glEnableVertexAttribArray(0)
+            GLES32.glVertexAttribPointer(0, 3, GLES32.GL_FLOAT, false, 5 * 4, quadVertexBuffer)
+            quadVertexBuffer.position(3)
+            GLES32.glEnableVertexAttribArray(1)
+            GLES32.glVertexAttribPointer(1, 2, GLES32.GL_FLOAT, false, 5 * 4, quadVertexBuffer)
+            GLES32.glDrawArrays(GLES32.GL_TRIANGLE_STRIP, 0, 4)
+            GLES32.glDisableVertexAttribArray(0)
+            GLES32.glDisableVertexAttribArray(1)
+        }
     }
 
     private fun buildProgram(vertexSrc: String, fragmentSrc: String): Int {
