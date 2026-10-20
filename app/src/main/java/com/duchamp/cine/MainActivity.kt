@@ -138,6 +138,7 @@ class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         shaderPipeline.initializeGL()
         android.opengl.Matrix.setIdentityM(stMatrix, 0)
+        cameraEngine.onGlSurfaceReady()
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {

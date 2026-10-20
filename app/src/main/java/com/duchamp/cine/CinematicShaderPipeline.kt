@@ -216,6 +216,9 @@ class CinematicShaderPipeline {
     var cameraTextureId = 0
         private set
 
+    var surfaceTexture: SurfaceTexture? = null
+        private set
+
     // FBO Ping-Pong system
     private val fboIds = IntArray(5)
     private val fboTextureIds = IntArray(5)
@@ -599,6 +602,10 @@ class CinematicShaderPipeline {
         GLES32.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES32.GL_TEXTURE_WRAP_S, GLES32.GL_CLAMP_TO_EDGE)
         GLES32.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES32.GL_TEXTURE_WRAP_T, GLES32.GL_CLAMP_TO_EDGE)
 
+        surfaceTexture = SurfaceTexture(cameraTextureId).apply {
+            setDefaultBufferSize(1920, 1080)
+        }
+
         // Compile Shader Programs
         pass1Program = buildProgram(vertexShaderSource, pass1FragmentShaderSource)
         pass2Program = buildProgram(vertexShaderSource, pass2FragmentShaderSource)
@@ -694,6 +701,12 @@ class CinematicShaderPipeline {
     }
 
     fun render(stMatrix: FloatArray) {
+        try {
+            surfaceTexture?.updateTexImage()
+            surfaceTexture?.getTransformMatrix(stMatrix)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error updating SurfaceTexture frame", e)
+        }
         updateInterpolation()
 
         GLES32.glDisable(GLES32.GL_DEPTH_TEST)

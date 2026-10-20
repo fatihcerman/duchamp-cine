@@ -124,6 +124,14 @@ class CameraAndAutoDirectorEngine(
         openCamera()
     }
 
+    fun onGlSurfaceReady() {
+        backgroundHandler?.post {
+            if (cameraDevice != null && captureSession == null) {
+                createCameraSession()
+            }
+        }
+    }
+
     fun stop() {
         closeCamera()
         unregisterSensors()
@@ -312,13 +320,23 @@ class CameraAndAutoDirectorEngine(
                 // ==========================================
                 // STRICT ZERO-ISP FLAGS FOR POCO X6 PRO
                 // ==========================================
+                set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+                set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+                set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
+
                 set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_OFF)
                 set(
                     CaptureRequest.NOISE_REDUCTION_MODE,
                     if (isFrontCamera) CaptureRequest.NOISE_REDUCTION_MODE_MINIMAL
                     else CaptureRequest.NOISE_REDUCTION_MODE_OFF
                 )
+                
+                val linearCurve = floatArrayOf(0.0f, 0.0f, 1.0f, 1.0f)
+                val tonemapCurve = android.hardware.camera2.params.TonemapCurve(linearCurve, linearCurve, linearCurve)
                 set(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE)
+                set(CaptureRequest.TONEMAP_CURVE, tonemapCurve)
+
                 set(CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE, CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE_OFF)
                 set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, exposureCompensationStep)
                 set(CaptureRequest.STATISTICS_FACE_DETECT_MODE, CaptureRequest.STATISTICS_FACE_DETECT_MODE_SIMPLE)
