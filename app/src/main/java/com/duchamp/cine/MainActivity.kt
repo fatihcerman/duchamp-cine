@@ -397,7 +397,7 @@ fun TopHudBar(
             )
             Spacer(modifier = Modifier.width(4.dp))
             Text(
-                text = "• DIRECTING",
+                text = "• ${pipeline.profiles[telemetry.activeProfileId].name}",
                 color = Color.White.copy(alpha = 0.7f),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Normal,

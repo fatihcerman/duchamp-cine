@@ -290,6 +290,8 @@ class CinematicShaderPipeline {
                 uv = warped + vec2(0.5);
             }
 
+            if (uIsFrontCamera == 1) { uv.x = 1.0 - uv.x; }
+            uv.y = (uv.y - 0.5) * 0.703125 + 0.5;
             vec4 rawColor = texture(uCameraTexture, uv);
 
             // Subtract sensor black level (0.015)
@@ -366,7 +368,7 @@ class CinematicShaderPipeline {
             // Optical lens falloff (vignette & corner softness)
             vec2 distFromCenter = vTexCoord - vec2(0.5);
             float dist = length(distFromCenter);
-            float vig = smoothstep(0.75, 0.35, dist * (1.0 + uVignetteStrength * 0.85));
+            float vig = 1.0 - smoothstep(0.42, 0.82, dist) * (uVignetteStrength * 0.40);
 
             fragColor = vec4(linearWithHalation * vig, 1.0);
         }
