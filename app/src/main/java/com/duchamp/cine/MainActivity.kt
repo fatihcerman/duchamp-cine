@@ -88,7 +88,10 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         }.apply {
             onFrameCaptured = { bitmap, director, lens ->
                 cameraEngine.exportInstagramZeroPenaltyJpeg(bitmap, director, lens) { msg ->
-                    lastSavedToast = "KAYDEDİLDİ: $msg"
+                    runOnUiThread {
+                        lastSavedToast = msg
+                        android.widget.Toast.makeText(this@MainActivity, "KAYDEDİLDİ: $msg", android.widget.Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
         }
@@ -248,27 +251,17 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                     modifier = Modifier.fillMaxSize()
                 )
 
-                // Center Kubrick Symmetry Crosshair & 0.1° Gyro Horizon Indicator
+                // Center Kubrick Symmetry Crosshair & 0.1° Gyro Horizon Indicator (Sleek Minimalist)
                 val isLevel = abs(gyroRollDeg) <= 0.35f
                 Box(
-                    modifier = Modifier
-                        .size(if (selectedLens.isFrontFacing) 130.dp else 84.dp)
-                        .border(
-                            width = 1.5.dp,
-                            color = when {
-                                selectedLens.isFrontFacing && telemetryState.faceSweetSpotOk -> Color(0xFF10B981)
-                                isLevel -> Color(0xFF10B981)
-                                else -> Color(0x66FFFFFF)
-                            },
-                            shape = CircleShape
-                        ),
+                    modifier = Modifier.size(50.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Box(
                         modifier = Modifier
-                            .width(56.dp)
-                            .height(2.dp)
-                            .background(if (isLevel) Color(0xFF10B981) else Color(0xFFF59E0B))
+                            .width(36.dp)
+                            .height(1.5.dp)
+                            .background(if (isLevel) Color(0xFF10B981) else Color(0x88FFFFFF))
                     )
                 }
 

@@ -287,41 +287,51 @@ class CameraAndAutoDirectorEngine(
         onSaved: (String) -> Unit
     ) {
         bgHandler?.post {
-            var quality = 96
-            var jpegBytes: ByteArray
-            do {
-                val baos = ByteArrayOutputStream()
-                bitmap.compress(Bitmap.CompressFormat.JPEG, quality, baos)
-                jpegBytes = baos.toByteArray()
-                quality -= 2
-            } while (jpegBytes.size > 950_000 && quality >= 86)
+            try {
+                var quality = 96
+                var jpegBytes: ByteArray
+                do {
+                    val baos = ByteArrayOutputStream()
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, quality, baos)
+                    jpegBytes = baos.toByteArray()
+                    quality -= 2
+                } while (jpegBytes.size > 950_000 && quality >= 84)
 
-            val fileName = "DUCHAMP_${director.codeName.replace(" ", "")}_${lens.focalLengthMm}MM_${System.currentTimeMillis()}.jpg"
-            val values = ContentValues().apply {
-                put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
-                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_DCIM + "/DuchampCine")
-                put(MediaStore.Images.Media.IS_PENDING, 1)
-            }
+                val fileName = "DUCHAMP_${director.codeName.replace(" ", "")}_${lens.focalLengthMm}MM_${System.currentTimeMillis()}.jpg"
+                val tempFile = java.io.File(context.cacheDir, fileName)
+                java.io.FileOutputStream(tempFile).use { it.write(jpegBytes) }
 
-            val resolver = context.contentResolver
-            val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-            if (uri != null) {
-                resolver.openOutputStream(uri)?.use { out ->
-                    out.write(jpegBytes)
-                }
-                // Stamp Cinema EXIF Metadata
-                resolver.openFileDescriptor(uri, "rw")?.use { pfd ->
-                    val exif = ExifInterface(pfd.fileDescriptor)
+                try {
+                    val exif = ExifInterface(tempFile.absolutePath)
                     exif.setAttribute(ExifInterface.TAG_MAKE, "POCO X6 Pro • Duchamp Cine")
                     exif.setAttribute(ExifInterface.TAG_MODEL, "${lens.sensorModel} [${director.codeName}]")
                     exif.setAttribute(ExifInterface.TAG_SOFTWARE, "Zero-ISP GLSL Lanczos-3 sRGB")
                     exif.saveAttributes()
+                } catch (e: Exception) {
+                    android.util.Log.e("CameraEngine", "EXIF write warning", e)
                 }
-                values.clear()
-                values.put(MediaStore.Images.Media.IS_PENDING, 0)
-                resolver.update(uri, values, null, null)
-                onSaved("$fileName (${jpegBytes.size / 1024} KB • sRGB)")
+
+                val values = ContentValues().apply {
+                    put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+                    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_DCIM + "/DuchampCine")
+                    put(MediaStore.Images.Media.IS_PENDING, 0)
+                }
+
+                val resolver = context.contentResolver
+                val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                if (uri != null) {
+                    resolver.openOutputStream(uri)?.use { out ->
+                        tempFile.inputStream().use { it.copyTo(out) }
+                    }
+                    tempFile.delete()
+                    onSaved("$fileName (${jpegBytes.size / 1024} KB)")
+                } else {
+                    onSaved("Kayıt hatası: URI oluşturulamadı")
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("CameraEngine", "Export error", e)
+                onSaved("Kayıt hatası: ${e.message}")
             }
         }
     }

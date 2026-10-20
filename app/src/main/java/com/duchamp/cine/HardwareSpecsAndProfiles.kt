@@ -118,9 +118,9 @@ enum class DuchampLens(
         preferredPhysicalId = "1",
         defaultEvBias = -0.4f,
         // Transforms 21mm wide selfie into natural 35mm close-up portrait (eliminates big nose)
-        barrelK1 = -0.18f,
-        barrelK2 = 0.04f,
-        centerCropFactor = 0.15f,
+        barrelK1 = 0.0f,
+        barrelK2 = 0.0f,
+        centerCropFactor = 0.08f,
         // Fix OV16A1Q indoor white balance drift toward golden skin line
         spectralGainR = 1.03f,
         spectralGainG = 0.99f,

@@ -67,6 +67,7 @@ class CinematicShaderPipeline(
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         GLES32.glClearColor(0.03f, 0.03f, 0.05f, 1.0f)
+        android.opengl.Matrix.setIdentityM(stMatrix, 0)
         oesTextureId = createExternalOesTexture()
         surfaceTexture = SurfaceTexture(oesTextureId).apply {
             setDefaultBufferSize(4624, 3468)
@@ -83,6 +84,7 @@ class CinematicShaderPipeline(
 
     override fun onDrawFrame(gl: GL10?) {
         surfaceTexture?.updateTexImage()
+        surfaceTexture?.getTransformMatrix(stMatrix)
         interpolateUniforms(0.12f)
 
         // Normal 60fps Viewfinder Pass
@@ -127,6 +129,7 @@ class CinematicShaderPipeline(
         GLES32.glActiveTexture(GLES32.GL_TEXTURE0)
         GLES32.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTextureId)
         GLES32.glUniform1i(GLES32.glGetUniformLocation(shaderProgram, "uCameraTex"), 0)
+        GLES32.glUniformMatrix4fv(GLES32.glGetUniformLocation(shaderProgram, "uSTMatrix"), 1, false, stMatrix, 0)
 
         GLES32.glUniform2f(GLES32.glGetUniformLocation(shaderProgram, "uResolution"), width.toFloat(), height.toFloat())
         GLES32.glUniform1f(GLES32.glGetUniformLocation(shaderProgram, "uTime"), timeSec)
@@ -176,8 +179,8 @@ class CinematicShaderPipeline(
 
         GLES32.glBindTexture(GLES32.GL_TEXTURE_2D, tex[0])
         GLES32.glTexImage2D(
-            GLES32.GL_TEXTURE_2D, 0, GLES32.GL_RGBA16F,
-            targetW, targetH, 0, GLES32.GL_RGBA, GLES32.GL_HALF_FLOAT, null
+            GLES32.GL_TEXTURE_2D, 0, GLES32.GL_RGBA8,
+            targetW, targetH, 0, GLES32.GL_RGBA, GLES32.GL_UNSIGNED_BYTE, null
         )
         GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_MIN_FILTER, GLES32.GL_LINEAR)
         GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_MAG_FILTER, GLES32.GL_LINEAR)
@@ -242,11 +245,11 @@ class CinematicShaderPipeline(
         private const val VERTEX_SHADER_320_ES = """#version 320 es
             layout(location = 0) in vec2 aPosition;
             layout(location = 1) in vec2 aTexCoord;
+            uniform mat4 uSTMatrix;
             out vec2 vTexCoord;
             void main() {
                 gl_Position = vec4(aPosition, 0.0, 1.0);
-                // Rotate sensor landscape to portrait orientation
-                vTexCoord = vec2(1.0 - aTexCoord.y, aTexCoord.x);
+                vTexCoord = (uSTMatrix * vec4(aTexCoord, 0.0, 1.0)).xy;
             }
         """
 
@@ -282,9 +285,7 @@ class CinematicShaderPipeline(
             // 1. Optical Rectification (16mm OV08D10 Edge Correction & 21mm->35mm OV16A1Q Selfie Rectification)
             vec2 rectifyLensUV(vec2 uv) {
                 vec2 centered = (uv - 0.5) * 2.0;
-                if (uIsFrontCamera == 1) {
-                    centered.x = -centered.x; // Mirror front camera horizontally
-                }
+                // uSTMatrix already handles hardware sensor orientation & mirroring
                 float r2 = dot(centered, centered);
                 float radialWarp = 1.0 + uLensDistortion.x * r2 + uLensDistortion.y * r2 * r2;
                 vec2 warped = centered * radialWarp * (1.0 - uLensDistortion.z);
