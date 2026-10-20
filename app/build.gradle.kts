@@ -18,21 +18,11 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
-
-        ndk {
-            abiFilters.addAll(setOf("arm64-v8a"))
-        }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
-            signingConfig = signingConfigs.getByName("debug")
+            isMinifyEnabled = false
         }
         debug {
             isMinifyEnabled = false
@@ -80,16 +70,10 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-extended")
 
     // Camera & EXIF
     implementation("androidx.exifinterface:exifinterface:1.3.7")
 
     // Coroutines
     implementation("kotlinx.coroutines:kotlinx-coroutines-android:1.8.1")
-
-    // Testing
-    testImplementation("junit:junit:4.13.2")
-    androidTestImplementation("androidx.test.ext:junit:1.2.1")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
 }

@@ -319,7 +319,7 @@ fun CinemaCameraScreen(
                 ) {
                     // Outer ring with capture burst progress
                     CircularProgressIndicator(
-                        progress = { captureAnimProgress },
+                        progress = captureAnimProgress,
                         modifier = Modifier.size(76.dp),
                         color = Color(0xFF00E676),
                         strokeWidth = 3.dp,
@@ -341,7 +341,7 @@ fun CinemaCameraScreen(
                     modifier = Modifier.size(48.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.FlipCameraAndroid,
+                        imageVector = Icons.Default.Refresh,
                         contentDescription = "Switch Camera",
                         tint = Color.White
                     )
@@ -449,7 +449,7 @@ fun TopHudBar(
                 modifier = Modifier.size(32.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Default.Crop,
+                    imageVector = Icons.Default.Settings,
                     contentDescription = "Toggle Film Border",
                     tint = if (showFilmBorder) Color(0xFF00E676) else Color.White.copy(alpha = 0.5f),
                     modifier = Modifier.size(18.dp)
