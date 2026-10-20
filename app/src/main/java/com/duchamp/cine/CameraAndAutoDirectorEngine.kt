@@ -225,6 +225,7 @@ class CameraAndAutoDirectorEngine(
 
     @SuppressLint("MissingPermission")
     private fun openCamera() {
+        if (cameraDevice != null) return
         val cameraId = if (isFrontCamera) FRONT_CAMERA_ID else REAR_CAMERA_ID
         Log.i(TAG, "Opening POCO X6 Pro Zero-ISP Camera ID: $cameraId (isFront: $isFrontCamera)")
 
@@ -288,11 +289,7 @@ class CameraAndAutoDirectorEngine(
         }
         val glPreviewSurface = Surface(surfaceTexture)
 
-        val surfaces = mutableListOf(
-            glPreviewSurface,
-            yuvImageReader!!.surface,
-            captureImageReader!!.surface
-        )
+        val surfaces = mutableListOf(glPreviewSurface)
 
         try {
             device.createCaptureSession(surfaces, object : CameraCaptureSession.StateCallback() {
@@ -315,8 +312,7 @@ class CameraAndAutoDirectorEngine(
         try {
             previewRequestBuilder = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
                 addTarget(previewSurface)
-                addTarget(yuvImageReader!!.surface)
-
+                
                 // ==========================================
                 // STRICT ZERO-ISP FLAGS FOR POCO X6 PRO
                 // ==========================================
@@ -334,7 +330,7 @@ class CameraAndAutoDirectorEngine(
                 
                 val linearCurve = floatArrayOf(0.0f, 0.0f, 1.0f, 1.0f)
                 val tonemapCurve = android.hardware.camera2.params.TonemapCurve(linearCurve, linearCurve, linearCurve)
-                set(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE)
+                set(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_FAST)
                 set(CaptureRequest.TONEMAP_CURVE, tonemapCurve)
 
                 set(CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE, CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE_OFF)
@@ -560,7 +556,7 @@ class CameraAndAutoDirectorEngine(
                         if (isFrontCamera) CaptureRequest.NOISE_REDUCTION_MODE_MINIMAL
                         else CaptureRequest.NOISE_REDUCTION_MODE_OFF
                     )
-                    set(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE)
+                    set(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_FAST)
                     set(CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE, CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE_OFF)
                     set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, exposureCompensationStep)
                 }
