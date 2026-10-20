@@ -1,606 +1,439 @@
 package com.duchamp.cine
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.SurfaceTexture
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.opengl.GLSurfaceView
 import android.os.Bundle
-import android.view.View
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.view.WindowManager
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.*
-import androidx.compose.animation.core.*
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.rotate
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import javax.microedition.khronos.egl.EGLConfig
-import javax.microedition.khronos.opengles.GL10
+import kotlin.math.abs
+import kotlin.math.atan2
 
-/**
- * DUCHAMP CINE: Minimalist Cinema HUD & Jetpack Compose Viewfinder.
- * Includes Gyroscope 0.1° Horizon Lock, Sweet-Spot Face Distance Reticle,
- * Warm-Fill Screen Reflector, and One-Tap Director Bar.
- */
-class MainActivity : ComponentActivity(), GLSurfaceView.Renderer {
+class MainActivity : ComponentActivity(), SensorEventListener {
 
-    private lateinit var glSurfaceView: GLSurfaceView
-    private val shaderPipeline = CinematicShaderPipeline()
     private lateinit var cameraEngine: CameraAndAutoDirectorEngine
+    private lateinit var shaderPipeline: CinematicShaderPipeline
+    private var glSurfaceTexture: SurfaceTexture? = null
+    private lateinit var sensorManager: SensorManager
 
-    private val stMatrix = FloatArray(16)
+    private var telemetryState by mutableStateOf(
+        CameraAndAutoDirectorEngine.TelemetrySnapshot(
+            iso = 200,
+            shutterSpeedText = "1/100s",
+            kelvin = 4800,
+            faceSweetSpotOk = false,
+            faceDetected = false,
+            lowLightSelfieFillRequired = false,
+            recommendedDirector = DirectorProfile.WONG_KAR_WAI
+        )
+    )
+    private var gyroRollDeg by mutableFloatStateOf(0f)
+    private var lastSavedToast by mutableStateOf("POCO X6 Pro Zero-ISP Hazır")
 
     private val permissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        val cameraGranted = permissions[Manifest.permission.CAMERA] ?: false
-        if (cameraGranted) {
-            cameraEngine.start()
-        } else {
-            Toast.makeText(this, "Camera permission required for Zero-ISP capture", Toast.LENGTH_LONG).show()
-            finish()
-        }
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) glSurfaceTexture?.let { cameraEngine.openCameraForLens(cameraEngine.activeLens, it) }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // Lock Fullscreen & Keep Screen On for Cinema Operation
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        window.decorView.systemUiVisibility = (
-            View.SYSTEM_UI_FLAG_FULLSCREEN or
-            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
-            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-        )
 
-        cameraEngine = CameraAndAutoDirectorEngine(this, shaderPipeline)
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
 
-        // Setup OpenGL ES 3.2 View
-        glSurfaceView = GLSurfaceView(this).apply {
-            setEGLContextClientVersion(3)
-            setRenderer(this@MainActivity)
-            renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
+        cameraEngine = CameraAndAutoDirectorEngine(this) { snapshot ->
+            telemetryState = snapshot
+        }
+
+        shaderPipeline = CinematicShaderPipeline { surfaceTex ->
+            glSurfaceTexture = surfaceTex
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                cameraEngine.openCameraForLens(DuchampLens.MAIN_25MM, surfaceTex)
+            } else {
+                permissionLauncher.launch(Manifest.permission.CAMERA)
+            }
+        }.apply {
+            onFrameCaptured = { bitmap, director, lens ->
+                cameraEngine.exportInstagramZeroPenaltyJpeg(bitmap, director, lens) { msg ->
+                    lastSavedToast = "KAYDEDİLDİ: $msg"
+                }
+            }
         }
 
         setContent {
-            CinemaCameraScreen(
-                glSurfaceView = glSurfaceView,
-                cameraEngine = cameraEngine,
-                pipeline = shaderPipeline
-            )
-        }
-
-        checkAndRequestPermissions()
-    }
-
-    private fun checkAndRequestPermissions() {
-        val permissions = arrayOf(
-            Manifest.permission.CAMERA
-        )
-        val allGranted = permissions.all {
-            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
-        }
-
-        if (allGranted) {
-            cameraEngine.start()
-        } else {
-            permissionLauncher.launch(permissions)
+            DuchampCinemaHud()
         }
     }
 
     override fun onResume() {
         super.onResume()
-        glSurfaceView.onResume()
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            cameraEngine.start()
+        sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)?.let {
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
         }
     }
 
     override fun onPause() {
         super.onPause()
-        glSurfaceView.onPause()
-        cameraEngine.stop()
+        sensorManager.unregisterListener(this)
+        cameraEngine.stopBackgroundThread()
     }
 
-    // ==========================================
-    // GLSurfaceView.Renderer Callbacks
-    // ==========================================
-    override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
-        shaderPipeline.initializeGL()
-        android.opengl.Matrix.setIdentityM(stMatrix, 0)
-        cameraEngine.onGlSurfaceReady()
+    override fun onSensorChanged(event: SensorEvent?) {
+        if (event?.sensor?.type == Sensor.TYPE_ROTATION_VECTOR) {
+            val rotMatrix = FloatArray(9)
+            SensorManager.getRotationMatrixFromVector(rotMatrix, event.values)
+            val rollRad = atan2(rotMatrix[3].toDouble(), rotMatrix[4].toDouble())
+            val deg = Math.toDegrees(rollRad).toFloat()
+            gyroRollDeg = gyroRollDeg * 0.8f + deg * 0.2f
+            cameraEngine.currentGyroTiltDeg = gyroRollDeg
+        }
     }
 
-    override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
-        shaderPipeline.onSurfaceChanged(width, height)
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+
+    private fun triggerHapticClick() {
+        val vib = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        vib?.vibrate(VibrationEffect.createOneShot(18, VibrationEffect.DEFAULT_AMPLITUDE))
     }
 
-    override fun onDrawFrame(gl: GL10?) {
-        shaderPipeline.render(stMatrix)
-    }
-}
+    @Composable
+    fun DuchampCinemaHud() {
+        var isAutoMode by remember { mutableStateOf(true) }
+        var manualDirector by remember { mutableStateOf(DirectorProfile.WONG_KAR_WAI) }
+        var selectedLens by remember { mutableStateOf(DuchampLens.MAIN_25MM) }
+        var isScopeAspect by remember { mutableStateOf(false) }
+        var showFilmBorder by remember { mutableStateOf(false) }
+        var evBias by remember { mutableFloatStateOf(-0.7f) }
 
-@Composable
-fun CinemaCameraScreen(
-    glSurfaceView: GLSurfaceView,
-    cameraEngine: CameraAndAutoDirectorEngine,
-    pipeline: CinematicShaderPipeline
-) {
-    val context = LocalContext.current
-    val telemetry by cameraEngine.telemetry.collectAsStateWithLifecycle()
-
-    var is191Scope by remember { mutableStateOf(false) }
-    var showFilmBorder by remember { mutableStateOf(false) }
-    var exposureBiasEv by remember { mutableFloatStateOf(-0.7f) }
-
-    // Shutter animation
-    val captureAnimProgress by animateFloatAsState(
-        targetValue = if (telemetry.isCapturing) telemetry.captureProgress else 0.0f,
-        label = "CaptureProgress"
-    )
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-    ) {
-        // --- 1. OpenGL Viewfinder Container ---
-        val aspectRatio = if (is191Scope) 1.91f else (4.0f / 5.0f)
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(top = 70.dp, bottom = 150.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(aspectRatio)
-                    .clip(RoundedCornerShape(if (showFilmBorder) 0.dp else 4.dp))
-                    .background(Color.Black)
-            ) {
-                AndroidView(
-                    factory = { glSurfaceView },
-                    modifier = Modifier.fillMaxSize()
-                )
-
-                // Reticle Overlay (Horizon Level, Crosshair, Sweet-Spot Ring)
-                CinemaReticleOverlay(
-                    telemetry = telemetry,
-                    isFrontCamera = cameraEngine.isFrontCamera,
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
+        val effectiveDirector = if (isAutoMode) telemetryState.recommendedDirector else manualDirector
+        LaunchedEffect(effectiveDirector, selectedLens, isScopeAspect, showFilmBorder) {
+            shaderPipeline.targetDirector = effectiveDirector
+            shaderPipeline.activeLens = selectedLens
+            shaderPipeline.isScopeAspect = isScopeAspect
+            shaderPipeline.showFilmBorder = showFilmBorder
         }
 
-        // --- 2. Warm-Fill Screen Reflector (Front Camera Low-Light) ---
-        if (telemetry.isWarmFillActive) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .border(
-                        width = 24.dp,
-                        color = Color(0xFFFFB36B).copy(alpha = 0.85f) // 2900K Tungsten Warm Amber
-                    )
-            )
-        }
-
-        // --- 3. Top HUD Bar ---
-        TopHudBar(
-            telemetry = telemetry,
-            is191Scope = is191Scope,
-            showFilmBorder = showFilmBorder,
-            onToggleAspect = {
-                is191Scope = !is191Scope
-                pipeline.isAspect191 = is191Scope
-            },
-            onToggleFilmBorder = {
-                showFilmBorder = !showFilmBorder
-                pipeline.showFilmBorder = showFilmBorder
-            },
-            onToggleAutoLock = {
-                cameraEngine.toggleAutoDirectorLock()
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.TopCenter)
-                .statusBarsPadding()
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-        )
-
-        // --- 4. Bottom Controls (Director Pill Bar, EV Slider, Shutter) ---
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(bottom = 12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+                .fillMaxSize()
+                .background(Color(0xFF07080C))
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // Exposure EV Slider (-1.5 EV to +0.5 EV)
-            ExposureBiasSlider(
-                currentEv = exposureBiasEv,
-                onEvChanged = { ev ->
-                    exposureBiasEv = ev
-                    val step = (ev / 0.3333f).toInt()
-                    cameraEngine.setExposureCompensation(step)
-                },
-                modifier = Modifier
-                    .fillMaxWidth(0.85f)
-                    .padding(bottom = 6.dp)
-            )
-
-            // Horizontal Director Pill Bar
-            DirectorPillBar(
-                profiles = pipeline.profiles,
-                activeProfileId = telemetry.activeProfileId,
-                recommendedProfileId = telemetry.recommendedProfileId,
-                isAutoLocked = telemetry.isAutoDirectorLocked,
-                onSelectProfile = { id ->
-                    cameraEngine.selectDirectorProfile(id)
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 12.dp)
-            )
-
-            // Bottom Shutter & Switch Bar
+            // 1. TOP TELEMETRY & AUTO-DIRECTOR HUD BAR
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 32.dp),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Preset Reset / Info
-                IconButton(
-                    onClick = {
-                        Toast.makeText(
-                            context,
-                            "ISO ${telemetry.iso} | ${telemetry.cctKelvin}K | ${telemetry.exposureTimeMs.toInt()}ms",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    },
-                    modifier = Modifier.size(48.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Info,
-                        contentDescription = "Sensor Telemetry",
-                        tint = Color.White.copy(alpha = 0.7f)
-                    )
-                }
-
-                // Tactile Cinema Shutter Button
                 Box(
-                    contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .size(80.dp)
-                        .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.2f))
-                        .clickable(enabled = !telemetry.isCapturing) {
-                            cameraEngine.capturePhoto { uri ->
-                                if (uri != null) {
-                                    Toast.makeText(context, "Captured: DCIM/DuchampCine", Toast.LENGTH_SHORT).show()
-                                } else {
-                                    Toast.makeText(context, "Capture failed", Toast.LENGTH_SHORT).show()
-                                }
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(if (isAutoMode) Color(0x33F59E0B) else Color(0xFF161924))
+                        .border(1.dp, if (isAutoMode) Color(0xFFF59E0B) else Color(0xFF2D3348), RoundedCornerShape(999.dp))
+                        .clickable {
+                            triggerHapticClick()
+                            if (isAutoMode) {
+                                manualDirector = telemetryState.recommendedDirector
+                                isAutoMode = false
+                            } else {
+                                isAutoMode = true
                             }
                         }
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
                 ) {
-                    // Outer ring with capture burst progress
-                    CircularProgressIndicator(
-                        progress = captureAnimProgress,
-                        modifier = Modifier.size(76.dp),
-                        color = Color(0xFF00E676),
-                        strokeWidth = 3.dp,
-                        trackColor = Color.White.copy(alpha = 0.4f)
+                    Text(
+                        text = if (isAutoMode) "AUTO • ${effectiveDirector.codeName}" else "KİLİTLİ • ${effectiveDirector.codeName}",
+                        color = if (isAutoMode) Color(0xFFFBBF24) else Color.White,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp
                     )
+                }
 
-                    // Inner shutter circle
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Box(
                         modifier = Modifier
-                            .size(62.dp)
-                            .clip(CircleShape)
-                            .background(if (telemetry.isCapturing) Color(0xFFFF5252) else Color.White)
-                    )
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(Color(0xFF161924))
+                            .clickable {
+                                triggerHapticClick()
+                                isScopeAspect = !isScopeAspect
+                            }
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = if (isScopeAspect) "1.91:1 SCOPE" else "4:5 IG DİKEY",
+                            color = Color(0xFF10B981),
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(if (showFilmBorder) Color(0x3310B981) else Color(0xFF161924))
+                            .clickable {
+                                triggerHapticClick()
+                                showFilmBorder = !showFilmBorder
+                            }
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = "35mm ÇERÇEVE",
+                            color = Color.LightGray,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp
+                        )
+                    }
                 }
-
-                // Front / Rear Camera Flip Button
-                IconButton(
-                    onClick = { cameraEngine.toggleCamera() },
-                    modifier = Modifier.size(48.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = "Switch Camera",
-                        tint = Color.White
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun TopHudBar(
-    telemetry: CameraAndAutoDirectorEngine.TelemetryState,
-    is191Scope: Boolean,
-    showFilmBorder: Boolean,
-    onToggleAspect: () -> Unit,
-    onToggleFilmBorder: () -> Unit,
-    onToggleAutoLock: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Row(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        // Director Auto / Lock Status Pill
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .clip(RoundedCornerShape(16.dp))
-                .background(Color(0xFF1E1E1E).copy(alpha = 0.85f))
-                .border(
-                    width = 1.dp,
-                    color = if (telemetry.isAutoDirectorLocked) Color(0xFFFFB300) else Color(0xFF00E676),
-                    shape = RoundedCornerShape(16.dp)
-                )
-                .clickable { onToggleAutoLock() }
-                .padding(horizontal = 10.dp, vertical = 6.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(if (telemetry.isAutoDirectorLocked) Color(0xFFFFB300) else Color(0xFF00E676))
-            )
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(
-                text = if (telemetry.isAutoDirectorLocked) "LOCKED" else "AUTO",
-                color = Color.White,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace
-            )
-            Spacer(modifier = Modifier.width(4.dp))
-            Text(
-                text = "• ${pipeline.profiles[telemetry.activeProfileId].name}",
-                color = Color.White.copy(alpha = 0.7f),
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Normal,
-                fontFamily = FontFamily.Monospace
-            )
-        }
-
-        // RAW Zero-ISP & Aspect Toggles
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // ZERO-ISP Indicator Badge
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(Color(0xFF2E7D32).copy(alpha = 0.6f))
-                    .border(0.5.dp, Color(0xFF00E676), RoundedCornerShape(4.dp))
-                    .padding(horizontal = 6.dp, vertical = 4.dp)
-            ) {
-                Text(
-                    text = "RAW ZERO-ISP",
-                    color = Color(0xFFE8F5E9),
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace
-                )
             }
 
-            // Aspect Ratio Toggle (4:5 / 1.91:1)
+            // 2. VIEWFINDER (4:5 OR 1.91:1) WITH GYRO LEVEL & SELFIE WARM-FILL LIGHT
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Color(0xFF262626))
-                    .clickable { onToggleAspect() }
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-            ) {
-                Text(
-                    text = if (is191Scope) "1.91:1 SCOPE" else "4:5 IG VERTICAL",
-                    color = Color.White,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Medium,
-                    fontFamily = FontFamily.Monospace
-                )
-            }
-
-            // 35mm Frame Toggle
-            IconButton(
-                onClick = { onToggleFilmBorder() },
-                modifier = Modifier.size(32.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Settings,
-                    contentDescription = "Toggle Film Border",
-                    tint = if (showFilmBorder) Color(0xFF00E676) else Color.White.copy(alpha = 0.5f),
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun CinemaReticleOverlay(
-    telemetry: CameraAndAutoDirectorEngine.TelemetryState,
-    isFrontCamera: Boolean,
-    modifier: Modifier = Modifier
-) {
-    Canvas(modifier = modifier) {
-        val w = size.width
-        val h = size.height
-
-        // 1. Rule of Thirds Grid Lines (Subtle)
-        val gridColor = Color.White.copy(alpha = 0.15f)
-        val stroke1 = Stroke(width = 1f)
-
-        // Vertical lines
-        drawLine(gridColor, Offset(w * 0.333f, 0f), Offset(w * 0.333f, h), strokeWidth = 1f)
-        drawLine(gridColor, Offset(w * 0.666f, 0f), Offset(w * 0.666f, h), strokeWidth = 1f)
-
-        // Horizontal lines
-        drawLine(gridColor, Offset(0f, h * 0.333f), Offset(w, h * 0.333f), strokeWidth = 1f)
-        drawLine(gridColor, Offset(0f, h * 0.666f), Offset(w, h * 0.666f), strokeWidth = 1f)
-
-        // 2. Kubrick Center Crosshair
-        val crosshairColor = Color.White.copy(alpha = 0.4f)
-        val cx = w * 0.5f
-        val cy = h * 0.5f
-        val crossSize = 16f
-        drawLine(crosshairColor, Offset(cx - crossSize, cy), Offset(cx + crossSize, cy), strokeWidth = 1.5f)
-        drawLine(crosshairColor, Offset(cx, cy - crossSize), Offset(cx, cy + crossSize), strokeWidth = 1.5f)
-
-        // 3. Gyroscope Horizon Level Indicator
-        // Snaps and turns #00E676 within ±0.2°
-        val levelColor = if (telemetry.isLevelLocked) Color(0xFF00E676) else Color.White.copy(alpha = 0.5f)
-        val levelAngle = if (telemetry.isLevelLocked) 0.0f else telemetry.tiltAngleDeg
-
-        rotate(degrees = -levelAngle, pivot = Offset(cx, cy)) {
-            val lineLength = 80f
-            // Left horizon bar
-            drawLine(levelColor, Offset(cx - lineLength - 30f, cy), Offset(cx - 30f, cy), strokeWidth = 2.5f)
-            // Right horizon bar
-            drawLine(levelColor, Offset(cx + 30f, cy), Offset(cx + lineLength + 30f, cy), strokeWidth = 2.5f)
-            // Center level pip
-            drawCircle(levelColor, radius = 2.5f, center = Offset(cx, cy))
-        }
-
-        // 4. Front Camera Sweet-Spot Distance Ring (40cm - 50cm)
-        if (isFrontCamera && telemetry.hasFace) {
-            val ringColor = if (telemetry.isFaceSweetSpot) Color(0xFF00E676) else Color(0xFFFFB300).copy(alpha = 0.6f)
-            drawCircle(
-                color = ringColor,
-                radius = 110f,
-                center = Offset(cx, cy * 0.85f),
-                style = Stroke(width = if (telemetry.isFaceSweetSpot) 3f else 1.5f)
-            )
-        }
-    }
-}
-
-@Composable
-fun ExposureBiasSlider(
-    currentEv: Float,
-    onEvChanged: (Float) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Row(
-        modifier = modifier,
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center
-    ) {
-        Text(
-            text = "EV ${if (currentEv >= 0) "+" else ""}${"%.1f".format(currentEv)}",
-            color = Color.White.copy(alpha = 0.8f),
-            fontSize = 11.sp,
-            fontFamily = FontFamily.Monospace,
-            modifier = Modifier.width(60.dp)
-        )
-        Slider(
-            value = currentEv,
-            onValueChange = onEvChanged,
-            valueRange = -1.5f..0.5f,
-            steps = 5,
-            colors = SliderDefaults.colors(
-                thumbColor = Color.White,
-                activeTrackColor = Color(0xFF00E676),
-                inactiveTrackColor = Color(0xFF333333)
-            ),
-            modifier = Modifier.weight(1f)
-        )
-    }
-}
-
-@Composable
-fun DirectorPillBar(
-    profiles: Array<CinematicShaderPipeline.DirectorProfile>,
-    activeProfileId: Int,
-    recommendedProfileId: Int,
-    isAutoLocked: Boolean,
-    onSelectProfile: (Int) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val scrollState = rememberScrollState()
-
-    Row(
-        modifier = modifier
-            .horizontalScroll(scrollState)
-            .padding(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        profiles.forEach { profile ->
-            val isSelected = profile.id == activeProfileId
-            val isRecommended = profile.id == recommendedProfileId && !isAutoLocked
-
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(
-                        when {
-                            isSelected -> Color(0xFFE0E0E0)
-                            isRecommended -> Color(0xFF1B5E20)
-                            else -> Color(0xFF1A1A1A)
-                        }
-                    )
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(vertical = 8.dp)
+                    .clip(RoundedCornerShape(18.dp))
                     .border(
-                        width = 1.dp,
-                        color = when {
-                            isSelected -> Color.White
-                            isRecommended -> Color(0xFF00E676)
-                            else -> Color(0xFF333333)
-                        },
-                        shape = RoundedCornerShape(16.dp)
-                    )
-                    .clickable { onSelectProfile(profile.id) }
-                    .padding(horizontal = 12.dp, vertical = 7.dp)
+                        width = if (telemetryState.lowLightSelfieFillRequired) 18.dp else 1.dp,
+                        color = if (telemetryState.lowLightSelfieFillRequired) Color(0xFFFFB36B) else Color(0xFF232736),
+                        shape = RoundedCornerShape(18.dp)
+                    ),
+                contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = profile.name,
-                    color = if (isSelected) Color.Black else Color.White,
-                    fontSize = 11.sp,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                    fontFamily = FontFamily.Monospace
+                AndroidView(
+                    factory = { ctx ->
+                        GLSurfaceView(ctx).apply {
+                            setEGLContextClientVersion(3)
+                            setRenderer(shaderPipeline)
+                            renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize()
                 )
+
+                // Center Kubrick Symmetry Crosshair & 0.1° Gyro Horizon Indicator
+                val isLevel = abs(gyroRollDeg) <= 0.35f
+                Box(
+                    modifier = Modifier
+                        .size(if (selectedLens.isFrontFacing) 130.dp else 84.dp)
+                        .border(
+                            width = 1.5.dp,
+                            color = when {
+                                selectedLens.isFrontFacing && telemetryState.faceSweetSpotOk -> Color(0xFF10B981)
+                                isLevel -> Color(0xFF10B981)
+                                else -> Color(0x66FFFFFF)
+                            },
+                            shape = CircleShape
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(56.dp)
+                            .height(2.dp)
+                            .background(if (isLevel) Color(0xFF10B981) else Color(0xFFF59E0B))
+                    )
+                }
+
+                // Bottom Overlay Sensor Telemetry Strip
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .background(Color(0x99000000))
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "ISO ${telemetryState.iso} • ${telemetryState.shutterSpeedText} • ${telemetryState.kelvin}K",
+                        color = Color.White,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp
+                    )
+                    Text(
+                        text = if (selectedLens.isFrontFacing) {
+                            if (telemetryState.faceSweetSpotOk) "45cm NET [OK]" else "MESAFE: ~45cm TUTUN"
+                        } else {
+                            "EĞİM: ${"%.1f".format(gyroRollDeg)}°"
+                        },
+                        color = if (isLevel || telemetryState.faceSweetSpotOk) Color(0xFF10B981) else Color(0xFFFBBF24),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp
+                    )
+                }
+            }
+
+            // 3. POCO X6 PRO 5-LENS SELECTOR BAR (16mm UW, 25mm Main, 50mm Prime, Macro, 35mm Selfie)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                DuchampLens.entries.forEach { lens ->
+                    val active = selectedLens == lens
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (active) Color(0xFFF59E0B) else Color(0xFF141722))
+                            .clickable {
+                                triggerHapticClick()
+                                selectedLens = lens
+                                evBias = lens.defaultEvBias
+                                glSurfaceTexture?.let { cameraEngine.openCameraForLens(lens, it) }
+                            }
+                            .padding(vertical = 8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = lens.badgeTitle,
+                            color = if (active) Color.Black else Color.LightGray,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                            fontSize = 10.sp
+                        )
+                    }
+                }
+            }
+
+            // 4. SCROLLABLE 8-DIRECTOR + AUTO SELECTOR BAR
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // AUTO Pill
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(if (isAutoMode) Color(0xFF10B981) else Color(0xFF141722))
+                        .clickable {
+                            triggerHapticClick()
+                            isAutoMode = true
+                        }
+                        .padding(horizontal = 14.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = "★ AUTO",
+                        color = if (isAutoMode) Color.Black else Color.White,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp
+                    )
+                }
+
+                DirectorProfile.entries.forEach { profile ->
+                    val active = !isAutoMode && manualDirector == profile
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(if (active) Color(0xFFF59E0B) else Color(0xFF141722))
+                            .clickable {
+                                triggerHapticClick()
+                                isAutoMode = false
+                                manualDirector = profile
+                            }
+                            .padding(horizontal = 14.dp, vertical = 8.dp)
+                    ) {
+                        Text(
+                            text = profile.codeName,
+                            color = if (active) Color.Black else Color.White,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            }
+
+            // 5. EV BIAS SLIDER & CINEMA SHUTTER BUTTON
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                    Text(
+                        text = "POZLAMA KORUMA: ${"%.1f".format(evBias)} EV  •  ${lastSavedToast}",
+                        color = Color.Gray,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp
+                    )
+                    Slider(
+                        value = evBias,
+                        onValueChange = {
+                            evBias = it
+                            cameraEngine.updateExposureBias(it)
+                        },
+                        valueRange = -1.5f..0.5f,
+                        colors = SliderDefaults.colors(
+                            thumbColor = Color(0xFFF59E0B),
+                            activeTrackColor = Color(0xFFF59E0B)
+                        )
+                    )
+                }
+
+                // Shutter Trigger
+                Box(
+                    modifier = Modifier
+                        .size(66.dp)
+                        .clip(CircleShape)
+                        .border(3.dp, Color.White, CircleShape)
+                        .clickable {
+                            triggerHapticClick()
+                            lastSavedToast = "LANCZOS-3 İŞLENİYOR..."
+                            shaderPipeline.captureRequested = true
+                        }
+                        .padding(6.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(CircleShape)
+                            .background(Color(0xFFF59E0B))
+                    )
+                }
             }
         }
     }
