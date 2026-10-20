@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.ColorSpace
 import android.graphics.ImageFormat
+import android.graphics.SurfaceTexture
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -365,7 +366,7 @@ class CameraAndAutoDirectorEngine(
         var faceDistCm = 0.0f
         var isSweetSpot = false
 
-        if (hasFace) {
+        if (faces != null && faces.isNotEmpty()) {
             val face = faces[0]
             val bounds = face.bounds
             // Fixed-Focus sweet spot calculation for OV16A1Q (focal length ~2.4mm, sensor width ~4.6mm)
